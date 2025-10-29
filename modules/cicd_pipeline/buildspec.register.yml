@@ -1,0 +1,103 @@
+version: 0.2
+env:
+  variables:
+    APPROVAL_STATUS: "Approved"
+phases:
+  install:
+    commands:
+      - pip install boto3
+  build:
+    commands:
+      - |
+        python - <<'PY'
+        import os, json, boto3, tarfile, io, time, pathlib
+        sm = boto3.client('sagemaker')
+        s3 = boto3.client('s3')
+
+        group = os.environ.get('MODEL_REGISTRY', '')
+        if not group:
+          raise SystemExit("MODEL_REGISTRY env var required")
+
+        bucket_arn = os.environ.get('MODEL_BUCKET_ARN', '')
+        bucket = bucket_arn.split(":::")[-1].split(":")[-1] if bucket_arn else None
+        key    = f"{group}/artifacts/model.tar.gz"
+
+        # Build a tiny model.tar.gz and upload to S3 so the package has ModelDataUrl
+        model_data_url = "s3://example/dummy/model.tar.gz"
+        if bucket:
+          buf = io.BytesIO()
+          with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="model.txt")
+            data = f"Dummy model for {group} at {time.time()}".encode()
+            info.size = len(data)
+            tar.addfile(tarinfo=info, fileobj=io.BytesIO(data))
+          buf.seek(0)
+          s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+          model_data_url = f"s3://{bucket}/{key}"
+
+        image_uri = os.environ.get("ECR_IMAGE_URI", "") or os.environ.get("ECR_REPO_URL", "")
+        if not image_uri:
+          print("Warning: ECR_IMAGE_URI/ECR_REPO_URL not set; using placeholder image")
+
+        resp = sm.create_model_package(
+          ModelPackageGroupName=group,
+          ModelPackageDescription="Auto-registered from pipeline",
+          InferenceSpecification={
+            'Containers': [{
+              'Image': image_uri + ":latest",
+              'ModelDataUrl': model_data_url
+            }],
+            'SupportedContentTypes': ['application/json'],
+            'SupportedResponseMIMETypes': ['application/json']
+          },
+          ModelApprovalStatus=os.environ.get('APPROVAL_STATUS','Approved')
+        )
+        arn = resp['ModelPackageArn']
+        print("MODEL_PACKAGE_ARN="+arn)
+        with open('model-package.json','w') as f: json.dump({'ModelPackageArn': arn}, f)
+
+        # include the CFN template in artifacts so Deploy stage can reference it
+        open('stackset.tpl.yaml','w').write("""AWSTemplateFormatVersion: '2010-09-09'
+Description: SageMaker Endpoint deployment (artifact from register stage)
+Parameters:
+  ModelPackageArn: {Type: String, Description: 'Approved Model Package ARN'}
+Resources:
+  EndpointRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: sagemaker.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonSageMakerServiceCatalogProductsUseRole
+  Model:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ExecutionRoleArn: !GetAtt EndpointRole.Arn
+      PrimaryContainer: { ModelPackageName: !Ref ModelPackageArn }
+      ModelName: !Sub '${AWS::StackName}-model'
+  EndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      ProductionVariants:
+        - ModelName: !Ref Model
+          VariantName: AllTraffic
+          InitialInstanceCount: 1
+          InstanceType: ml.m5.large
+  Endpoint:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Sub '${AWS::StackName}-endpoint'
+      EndpointConfigName: !Ref EndpointConfig
+Outputs:
+  EndpointName: {Value: !Ref Endpoint}
+""")
+        PY
+artifacts:
+  files:
+    - model-package.json
+    - stackset.tpl.yaml

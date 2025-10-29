@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SageMaker Endpoint deployment StackSet (static copy)
+Parameters:
+  ModelPackageArn:
+    Type: String
+    Description: ARN of the approved SageMaker ModelPackage to deploy
+Resources:
+  EndpointRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: sagemaker.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonSageMakerServiceCatalogProductsUseRole
+  Model:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ExecutionRoleArn: !GetAtt EndpointRole.Arn
+      PrimaryContainer:
+        ModelPackageName: !Ref ModelPackageArn
+      ModelName: !Sub "${AWS::StackName}-model"
+  EndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    Properties:
+      ProductionVariants:
+        - ModelName: !Ref Model
+          VariantName: "AllTraffic"
+          InitialInstanceCount: 1
+          InstanceType: ml.m5.large
+  Endpoint:
+    Type: AWS::SageMaker::Endpoint
+    Properties:
+      EndpointName: !Sub "${AWS::StackName}-endpoint"
+      EndpointConfigName: !Ref EndpointConfig
+Outputs:
+  EndpointName: { Value: !Ref Endpoint }
