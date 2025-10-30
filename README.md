@@ -1,7 +1,7 @@
-# 🚀 Boss Key — AWS MLOps Engine (aws-mlops-key)
+# 🚀 AWS MLOps Pipeline Engine (aws-mlops-key)
 
 > **“From Zero to Production MLOps in One Command.”**  
-> A fully automated AWS Machine-Learning Operations (MLOps) pipeline built to power the **Boss Key** SaaS engine — the ignition system for automated DevOps + MLOps provisioning.
+> A fully automated AWS Machine-Learning Operations (MLOps) pipeline built to power the SaaS engine — the ignition system for automated DevOps + MLOps provisioning.
 
 ---
 
