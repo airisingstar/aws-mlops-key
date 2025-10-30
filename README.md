@@ -227,6 +227,136 @@ Push the contents of `app_src/` there to trigger the pipeline.
 - `scripts/*.sh` – one‑liners to onboard clients or deploy/destroy
 - `.github/workflows/deploy.yml` – optional GitHub Actions workflow
 
+## 📦 Overview
+
+Running `terraform apply` will stand up a **complete MLOps environment** including:
+- Secure **VPC** with subnets
+- CI/CD pipelines (CodeCommit → CodeBuild → CodePipeline)
+- Model artifact storage (S3 + ECR + SageMaker Registry)
+- Automated model packaging and SageMaker Endpoint deployment via CloudFormation StackSets
+- Monitoring and logging buckets for audit trail
+
 ---
 
-© 2025 MyAiToolset LLC · Boss Key engine
+## 🧰 Modules Created
+
+### 1️⃣ Shared VPC (`modules/shared_vpc`)
+| Resource | Description |
+|-----------|--------------|
+| `aws_vpc.main` | Main network (CIDR: `10.21.0.0/16`) |
+| `aws_subnet.private_a` | Private subnet A (`us-east-1a`, `10.21.16.0/20`) |
+| `aws_subnet.private_b` | Private subnet B (`us-east-1b`, `10.21.32.0/20`) |
+
+**Outputs**
+- `vpc_id`
+- `subnet_ids`
+
+---
+
+### 2️⃣ Artifact Foundation (`modules/artifact_foundation`)
+| Resource | Description |
+|-----------|--------------|
+| `aws_s3_bucket.model_artifacts` | Stores model tarballs, training outputs |
+| `aws_sagemaker_model_package_group.registry` | Central SageMaker Model Registry |
+| `aws_ecr_repository.inference` | Container image repo for inference builds |
+
+---
+
+### 3️⃣ CI/CD Pipeline (`modules/cicd_pipeline`)
+| Resource | Description |
+|-----------|--------------|
+| `aws_codecommit_repository.repo` | Source repo for inference code and pipeline specs |
+| `aws_s3_bucket.artifacts` | Pipeline artifact store |
+| `aws_iam_role.codebuild_role` | Execution role for CodeBuild |
+| `aws_iam_role.codepipeline_role` | Role for CodePipeline orchestration |
+| `aws_codebuild_project.build` | Builds and pushes inference Docker image to ECR |
+| `aws_codebuild_project.register` | Registers SageMaker ModelPackage & uploads stackset.tpl.yaml |
+| `aws_codepipeline.pipeline` | Orchestrates CI/CD: Source → Build → Register → Manual Approval → DeployEndpoint |
+
+**Pipeline Stages**
+1. **Source** → from CodeCommit branch `main`  
+2. **BuildImage** → Docker build + push to ECR  
+3. **RegisterModel** → Creates/updates SageMaker ModelPackage  
+4. **ManualApproval** → requires manual “Approve for Deploy”  
+5. **DeployStack** → Creates endpoint via CloudFormation
+
+**Outputs**
+- `pipeline_name` → `demo-mlops-pipeline`
+
+---
+
+### 4️⃣ Endpoint StackSet (`modules/endpoint_stackset`)
+| Resource | Description |
+|-----------|--------------|
+| `aws_cloudformation_stack_set.endpoint` | Defines SageMaker endpoint deployment template |
+| `aws_cloudformation_stack_set_instance.this` | Deploys the endpoint instance in `us-east-1` |
+
+**Template Parameters**
+- `ModelPackageArn`: passed from the registered model stage
+
+**Outputs**
+- `endpoint_name` → `demo-sagemaker-endpoint-endpoint`
+
+---
+
+### 5️⃣ Operations & Monitoring (`modules/ops_monitoring`)
+| Resource | Description |
+|-----------|--------------|
+| `aws_s3_bucket.monitoring` | Stores logs, metrics, and event data |
+
+---
+
+## 🗂️ Total Resources Created
+
+| Category | Resource Count |
+|-----------|----------------|
+| Networking (VPC/Subnets) | 3 |
+| Artifact Management (S3, ECR, SageMaker Registry) | 3 |
+| CI/CD (CodeCommit, CodeBuild, CodePipeline, IAM Roles) | 8 |
+| Endpoint Deployment (CloudFormation StackSet + Instance) | 2 |
+| Monitoring | 1 |
+| **Total** | **18 resources** |
+
+---
+
+## 🧩 Outputs Summary
+
+| Output | Example Value |
+|---------|----------------|
+| `pipeline_name` | demo-mlops-pipeline |
+| `endpoint_name` | demo-sagemaker-endpoint-endpoint |
+| `vpc_id` | vpc-xxxxxx |
+| `subnet_ids` | [subnet-aaa, subnet-bbb] |
+
+---
+
+## ⚙️ How to Deploy
+
+```bash
+terraform init
+terraform plan -var-file="envs/client-demo.tfvars"
+terraform apply -var-file="envs/client-demo.tfvars"
+Confirm with yes when prompted.
+
+🧭 AWS Console Navigation Guide
+Service	Console Path
+CodeCommit	Repositories → demo-mlops-repo
+CodePipeline	Pipelines → demo-mlops-pipeline
+CodeBuild	Projects → demo-build, demo-register
+ECR	Repositories → demo/inference
+SageMaker	Model Registry → demo-registry
+CloudFormation	StackSets → demo-sagemaker-endpoint
+S3	Buckets → demo-model-artifacts, demo-mlops-artifacts-*, demo-monitoring
+
+🧹 Cleanup
+To destroy all infrastructure:
+
+bash
+Copy code
+terraform destroy -var-file="envs/client-demo.tfvars"
+
+---
+```
+
+Author: David Santana Rivera
+Updated: 10/31/2025
